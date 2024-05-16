@@ -58,6 +58,10 @@ escale = config['ENERGY_SCALE']
 
 hartree_to_kcal_mol = 627.509
 
+# -------------------------------------------------------------------------------------------------------------------- #
+#                                                  SUPPORT FUNCTIONS                                                   #
+# -------------------------------------------------------------------------------------------------------------------- #
+
 def rule_matches(match, **attribs):
     """
         Evaluate whether the provided `**attribs` match the values in the `match` dict.
@@ -133,55 +137,93 @@ def get_dep_set(points):
             s.add((p['method'], d))
     return s
 
-def get_energy(*path):
-    "Get calculated energies for molecule by parsing the `mol.out` file at `*path`."
-#
-# Next section is for extraction of the results (energies). The correct regex should be selected in the configfile, based on each problem/database/qcengine
-#
-    engine_exp = config["REGEXP"]
-    energy_exp = '(?P<energy>[-+]?\d+\.\d+)'
-    total_exp = engine_exp + energy_exp
-    regexp = re.compile(total_exp)
+def get_regex_result(regexp, *path):
+    "Find the last instance of `regexp` in the `mol.out` file at `*path`."
     with open(os.path.join(*path, 'mol.out'), 'r') as qcengine_out:
-        energy = re.findall(regexp, qcengine_out.read())
-        if energy:
-            # we are only interested in the last occurrence
-            return float(energy[-1]) / escale
+        # we are only interested in the last occurrence
+        # https://stackoverflow.com/a/54277955/7853604
+        match = None
+        for m in re.finditer(regexp, qcengine_out.read()): match = m.groupdict()
+        return match
 
 def get_full_energy(point, dft, energy_out_dir=ENERGIES_DIR):
     """
         Calculate the complete energy of `point` based on the provided output files. All of the molecular geometries
         that make up `point` are considered and are summed with their leading coeffficients.
     """
+    engine_exp = config["REGEXP"]
+    energy_exp = '(?P<energy>[-+]?\d+\.\d+)'
+    total_exp = re.compile(engine_exp + energy_exp)
+    
     s = 0
     for i in range(len(point['deps'])):
-        s += point['coeffs'][i] * get_energy(energy_out_dir, dft, point['method'], point['deps'][i])
+        re_res = get_regex_result(total_exp, energy_out_dir, dft, point['method'], point['deps'][i])
+        s += point['coeffs'][i] * float(re_res['energy']) / escale
     return s
 
-rule ALL:
-    input: expand('{out_DIR}/{db}/IndValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR)
+def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
+    """
+        Calculate the runtime of `point` based on the provided output files in seconds. The runtimes of each component
+        molecule are considered.
+    """
+    total_exp = re.compile(config["TIME_REGEXP"])
+    
+    s = 0
+    for i in range(len(point['deps'])):
+        re_res = get_regex_result(total_exp, energy_out_dir, dft, point['method'], point['deps'][i])
+        # Find total in seconds based on all available named groups; Note that they're all optional, but one needs to
+        # be specified to get a non-zero answer of course
+        days =     float(re_res['days'])    if 'days'    in re_res else 0
+        hours =   (float(re_res['hours'])   if 'hours'   in re_res else 0) + 24 * days
+        minutes = (float(re_res['minutes']) if 'minutes' in re_res else 0) + 60 * hours
+        seconds = (float(re_res['seconds']) if 'seconds' in re_res else 0) + 60 * minutes
+        seconds += (float(re_res['millis']) if 'millis'  in re_res else 0) / 1000.0
+        s += seconds
+    return s
 
-rule IND_VALUES:
-# Generate the `IndValues.csv` file in the given output directory for the given database.
-# This should replicate the results in `Database/{db}/IndValues.csv` to within less than a percent.
-    output: OUTPUTS_DIR + '/{db}/IndValues.csv'
-    input: unpack(lambda wildcards: expand('{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out', m=get_dep_set(read_database_eval(wildcards.db)), dft=DATABASES[wildcards.db]['dfts'], e_DIR=ENERGIES_DIR)), # If somebody knows how to get this to span more than one line (instead of being a very ugly one-liner without comments), please let me know!
-    run:
-        DB=DATABASES[wildcards.db]
-        with open(output[0], 'w', newline='') as output_file:
-            energy_data = csv.writer(output_file, dialect='excel')
-            energy_data.writerow(['RefNames', 'DatasetRefNames', 'RefValues', *DB['dfts']])
-            
-            eval_points = read_database_eval(wildcards.db)
-            for point in eval_points:
-                # Note that we write everything in kcal/mol because these studies keep switching units without ever
-                # actually LABELLING the units or specifying that a switch is happening. Oh well...
-                energy_data.writerow([
-                    point["name"],
-                    point["dataset"],
-                    point["refval"] * hartree_to_kcal_mol,
-                    *map(lambda dft: get_full_energy(point, dft) * hartree_to_kcal_mol, DB['dfts'])
-                ])
+# -------------------------------------------------------------------------------------------------------------------- #
+#                                                       RULES                                                          #
+# -------------------------------------------------------------------------------------------------------------------- #
+
+rule ALL:
+    input:
+        expand('{out_DIR}/{db}/IndValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/RunTimes.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR)
+
+for result in ["IndValues.csv", "RunTimes.csv"]:
+    rule:
+# Generate the `IndValues.csv` and `RunTimes.csv` files in the given output directory for the given database.
+# `IndValues.csv` should replicate the results in `Database/{db}/IndValues.csv` to within less than a percent.
+        name: f"COMPILED_{result}"
+        output: OUTPUTS_DIR + '/{db}/' + result
+        input: unpack(lambda wildcards: expand('{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out', m=get_dep_set(read_database_eval(wildcards.db)), dft=DATABASES[wildcards.db]['dfts'], e_DIR=ENERGIES_DIR)), # If somebody knows how to get this to span more than one line (instead of being a very ugly one-liner without comments), please let me know!
+        run:
+            DB=DATABASES[wildcards.db]
+            with open(output[0], 'w', newline='') as output_file:
+                csv_data = csv.writer(output_file, dialect='excel')
+                
+                if result == 'IndValues.csv':
+                    csv_data.writerow(['RefNames', 'DatasetRefNames', 'RefValues', *DB['dfts']])
+                else:
+                    csv_data.writerow(['RefNames', 'DatasetRefNames', *DB['dfts']])
+                
+                eval_points = read_database_eval(wildcards.db)
+                for point in eval_points:
+                    if result == 'IndValues.csv':
+                        # Note that we write everything in kcal/mol because these studies keep switching units without
+                        # ever actually LABELLING the units or specifying that a switch is happening. Oh well...
+                        csv_data.writerow([
+                            point["name"],
+                            point["dataset"],
+                            point["refval"] * hartree_to_kcal_mol,
+                            *map(lambda dft: get_full_energy(point, dft) * hartree_to_kcal_mol, DB['dfts'])
+                        ])
+                    else:
+                        csv_data.writerow([
+                            point["name"],
+                            point["dataset"],
+                            *map(lambda dft: get_runtime_seconds(point, dft), DB['dfts'])
+                        ])
 
 rule QCENGINE_RUN:
 #This rule calls the program.

@@ -82,6 +82,12 @@ QCENGINE_CALL: "psi4 -n {nproc} {input} {output}"   # Psi4
 REGEXP: '    Total Energy =\s*' # Psi4
       # 'SCF Done:  E({method}) =  '                # Gaussian
 
+#regexp to extract the runtime from output files
+#Can be tested with something like https://regex101.com/; Beware, group naming syntax is not standard; Use the Python
+#  standard for naming groups: (?P<name>...) instead of (?<name>...)
+#Valid group names are days, hours, minutes, seconds, millis (self-explanatory)
+TIME_REGEXP: '\s*Psi4 wall time for execution:\s*(?P<hours>[0-9]+):(?P<minutes>[0-9]+):(?P<seconds>[0-9\.]+)'
+
 # Energy of 1 Hartree in your output unit. For Psi4, this is 1.0 since it outputs in Hartrees.
 # If your software outputs in eV, for example, this would be 27.211396641308 Hartrees/eV
 # Find this in the first ROW of https://ryutok.github.io/EnergyConversionTable/
