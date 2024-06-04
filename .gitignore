@@ -13,3 +13,6 @@ tolaunch/
 # User-specific files
 qcengine.tmpl
 config.yaml
+
+# Temp dirs for Snakemake
+.tmp

@@ -222,6 +222,8 @@ def write_csv(file, **kwargs):
 #                                                       RULES                                                          #
 # -------------------------------------------------------------------------------------------------------------------- #
 
+localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_INPUT
+
 rule ALL:
     input:
         expand('{out_DIR}/{db}/IndValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
@@ -229,12 +231,12 @@ rule ALL:
 
 # All of the output files that need to be build for a complete database
 all_mol_outs = unpack(
-  lambda wildcards: expand(
-    '{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out',
-    m=get_dep_set(read_database_eval(wildcards.db)),
-    dft=DATABASES[wildcards.db]['dfts'],
-    e_DIR=ENERGIES_DIR
-  )
+    lambda wildcards: expand(
+        '{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out',
+        m=get_dep_set(read_database_eval(wildcards.db)),
+        dft=DATABASES[wildcards.db]['dfts'],
+        e_DIR=ENERGIES_DIR
+    )
 )
 
 rule IND_VALUES:
@@ -246,11 +248,11 @@ rule IND_VALUES:
         DB=DATABASES[wildcards.db]
         eval_points = read_database_eval(wildcards.db)
         write_csv(
-          output[0],
-          RefNames        = map(lambda p: p["name"], eval_points),
-          DatasetRefNames = map(lambda p: p["dataset"], eval_points),
-          RefValues       = map(lambda p: p["refval"] * units["OUT_INDVALUES"], eval_points), # Units going OUT -> Multiply
-          **gen_output_rows(eval_points, DB["dfts"], scalef(get_full_energy, units["OUT_INDVALUES"]))
+            output[0],
+            RefNames        = map(lambda p: p["name"], eval_points),
+            DatasetRefNames = map(lambda p: p["dataset"], eval_points),
+            RefValues       = map(lambda p: p["refval"] * units["OUT_INDVALUES"], eval_points), # Units going OUT -> Multiply
+            **gen_output_rows(eval_points, DB["dfts"], scalef(get_full_energy, units["OUT_INDVALUES"]))
         )
 rule RUN_TIMES:
     # Generate the `RunTimes.csv` file in the given output directory for the given database.
@@ -260,16 +262,23 @@ rule RUN_TIMES:
         DB=DATABASES[wildcards.db]
         eval_points = read_database_eval(wildcards.db)
         write_csv(
-          output[0],
-          RefNames        = map(lambda p: p["name"], eval_points),
-          DatasetRefNames = map(lambda p: p["dataset"], eval_points),
-          **gen_output_rows(eval_points, DB["dfts"], get_runtime_seconds)
+            output[0],
+            RefNames        = map(lambda p: p["name"], eval_points),
+            DatasetRefNames = map(lambda p: p["dataset"], eval_points),
+            **gen_output_rows(eval_points, DB["dfts"], get_runtime_seconds)
         )
 
 rule QCENGINE_RUN:
     # Invoke the calculation program specified in your config file
     input:      '{out_DIR}/{dft}/{method}/{molecule}/mol.in'
     output:     '{out_DIR}/{dft}/{method}/{molecule}/mol.out'
+    # Config for running remotely (ex, in a Slurm cluster)
+    resources:
+        cpus_per_task=4,
+        mem="4G",
+        runtime=60,
+        nodes=1,
+        tasks=1,
     run:
         shell(config["QCENGINE_CALL"])
 
