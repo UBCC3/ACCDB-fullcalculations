@@ -31,8 +31,8 @@ configfile: "config.yaml"
 wildcard_constraints:
      molecule='[-\w+=.]+',
      method='[-\w+=.]+',
-     basis='[-\w]+',
-     restriction='RHF|UHF',
+     dft='[-\w+=.]+',
+     db='[-\w+=.]+',
 
 # Input/output directories
 DATABASES_DIR = config['DATABASES_DIR']
@@ -51,12 +51,11 @@ TEMPL1 = config['TEMPL1']
 # NUMBER OF PROCESSORS/CORES/THREADS
 nproc = config['PROC']
 
-# Energy of 1 Hartree in your output unit. For Psi4, this is 1.0 since it outputs in Hartrees.
+# A method for dealing with the different units being thrown around everywhere
+# Energy of 1 Hartree in the designated unit. For Psi4, this is 1.0 since it outputs in Hartrees.
 # If your software outputs in eV, for example, this would be 27.211396641308 Hartrees/eV
 # Find this in the first ROW of https://ryutok.github.io/EnergyConversionTable/
-escale = config['ENERGY_SCALE']
-
-hartree_to_kcal_mol = 627.509
+units = config['UNITS']
 
 # -------------------------------------------------------------------------------------------------------------------- #
 #                                                  SUPPORT FUNCTIONS                                                   #
@@ -111,7 +110,7 @@ def read_database_eval(db, rules=RULES, db_dir=DATABASES_DIR, csv_name='DatasetE
             obj = {
               'name': row[0], # Name of the datapoint
               'dataset': '_'.join(row[0].split('_')[:-1]), # Name of the source dataset. TODO: This logic is a bit questionable
-              'refval': float(row[-1]), # Reference energy in Hartrees
+              'refval': float(row[-1]), # Reference energy in undetermined units -- See below
               'deps': row[2::2], # Dependencies; Raw calculations that make up this datapoint
               'coeffs': [*map(float, row[1:-1:2])], # Coefficients to apply to `deps` to make the datapoint `name`
             }
@@ -124,6 +123,9 @@ def read_database_eval(db, rules=RULES, db_dir=DATABASES_DIR, csv_name='DatasetE
             if matched_rule is None:
               raise Exception("Datapoint {} from database {} does not match any rules!", obj['name'], db)
             obj['method'] = matched_rule['method']
+            
+            _units = {**units, **matched_rule['units']} if 'units' in matched_rule else units
+            obj['refval'] /= _units['INP_DATASETEVAL'] # Units coming IN -> Divide
             
             if len(obj['deps']) != len(obj['coeffs']):
                 raise Exception("Malformed row in dataset eval file: " + str(test))
@@ -162,7 +164,7 @@ def get_full_energy(point, dft, energy_out_dir=ENERGIES_DIR):
     s = 0
     for i in range(len(point['deps'])):
         re_res = get_regex_result(total_exp, energy_out_dir, dft, point['method'], point['deps'][i])
-        s += point['coeffs'][i] * float(re_res['energy']) / escale
+        s += point['coeffs'][i] * float(re_res['energy']) / units['INP_QCENGINE'] # Divide since units are coming in
     return s
 
 def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
@@ -247,8 +249,8 @@ rule IND_VALUES:
           output[0],
           RefNames        = map(lambda p: p["name"], eval_points),
           DatasetRefNames = map(lambda p: p["dataset"], eval_points),
-          RefValues       = map(lambda p: p["refval"] * hartree_to_kcal_mol, eval_points),
-          **gen_output_rows(eval_points, DB['dfts'], scalef(get_full_energy, hartree_to_kcal_mol))
+          RefValues       = map(lambda p: p["refval"] * units["OUT_INDVALUES"], eval_points), # Units going OUT -> Multiply
+          **gen_output_rows(eval_points, DB["dfts"], scalef(get_full_energy, units["OUT_INDVALUES"]))
         )
 rule RUN_TIMES:
     # Generate the `RunTimes.csv` file in the given output directory for the given database.
@@ -261,7 +263,7 @@ rule RUN_TIMES:
           output[0],
           RefNames        = map(lambda p: p["name"], eval_points),
           DatasetRefNames = map(lambda p: p["dataset"], eval_points),
-          **gen_output_rows(eval_points, DB['dfts'], get_runtime_seconds)
+          **gen_output_rows(eval_points, DB["dfts"], get_runtime_seconds)
         )
 
 rule QCENGINE_RUN:

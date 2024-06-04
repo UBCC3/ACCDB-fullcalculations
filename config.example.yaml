@@ -88,9 +88,18 @@ REGEXP: '    Total Energy =\s*' # Psi4
 #Valid group names are days, hours, minutes, seconds, millis (self-explanatory)
 TIME_REGEXP: '\s*Psi4 wall time for execution:\s*(?P<hours>[0-9]+):(?P<minutes>[0-9]+):(?P<seconds>[0-9\.]+)'
 
-# Energy of 1 Hartree in your output unit. For Psi4, this is 1.0 since it outputs in Hartrees.
+# A method for dealing with the different units being thrown around everywhere
+# Energy of 1 Hartree in the designated unit. For Psi4, this is 1.0 since it outputs in Hartrees.
 # If your software outputs in eV, for example, this would be 27.211396641308 Hartrees/eV
 # Find this in the first ROW of https://ryutok.github.io/EnergyConversionTable/
-ENERGY_SCALE: 1.0
+UNITS:
+  # Energy scaling factor for the output of your program
+  INP_QCENGINE: 1.0 # Psi4 1.0 Hartree/Hartree
+  # Energy scaling factor for the study's reference values stored in DatasetEval.csv
+  INP_DATASETEVAL: null # Set per-database above.
+  
+  # Energy scaling factor for what YOU want IndValues.csv to be in
+  # Be aware that this must be set correctly to directly reproduce the values of studies!
+  OUT_INDVALUES: 627.509 # Units switch once again: 627.509 Hartrees/kcal/mol
 
 ...
