@@ -62,6 +62,10 @@ hartree_to_kcal_mol = 627.509
 #                                                  SUPPORT FUNCTIONS                                                   #
 # -------------------------------------------------------------------------------------------------------------------- #
 
+def scalef(f, scale):
+    """Returns a function that calls `f` and multiplies its output by `scale`."""
+    return lambda *args, **kwargs: f(*args, **kwargs) * scale
+
 def rule_matches(match, **attribs):
     """
         Evaluate whether the provided `**attribs` match the values in the `match` dict.
@@ -181,6 +185,37 @@ def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
         s += seconds
     return s
 
+def gen_output_rows(points, headers, handler, scalefactor=1.0):
+    """
+        Given a list of input `headers`, generate entries in a dict. Each entry is an array of mapped `points`, which
+        are mapped by calling `handler` with (point, header) as arguments. Useful for, say, making a spreadsheet with
+        several parameters.
+    """
+    gen_column = lambda header: [handler(point, header) for point in points]
+    
+    return dict(zip(headers, map(gen_column, headers)))
+
+def write_csv(file, **kwargs):
+    """
+        Write a CSV file with headers matching the kwargs, and items matching the iterable arguments.
+    """
+    with open(file, 'w', newline='') as output_file:
+        csv_data = csv.writer(output_file, dialect='excel')
+        
+        csv_data.writerow([*kwargs.keys()])
+        for key in kwargs.keys(): kwargs[key] = kwargs[key].__iter__()
+        
+        n_keys = len(kwargs.keys())
+        n_stop = 0
+        while True:
+            row = []
+            for arg in kwargs.values():
+                try: row.append(arg.__next__())
+                except StopIteration: n_stop += 1
+            if n_stop == n_keys: return
+            if n_stop > 0: raise RuntimeError('Arguments to writeCsv have different lengths!')
+            csv_data.writerow(row)
+
 # -------------------------------------------------------------------------------------------------------------------- #
 #                                                       RULES                                                          #
 # -------------------------------------------------------------------------------------------------------------------- #
@@ -190,59 +225,66 @@ rule ALL:
         expand('{out_DIR}/{db}/IndValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
         expand('{out_DIR}/{db}/RunTimes.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR)
 
-for result in ["IndValues.csv", "RunTimes.csv"]:
-    rule:
-# Generate the `IndValues.csv` and `RunTimes.csv` files in the given output directory for the given database.
-# `IndValues.csv` should replicate the results in `Database/{db}/IndValues.csv` to within less than a percent.
-        name: f"COMPILED_{result}"
-        output: OUTPUTS_DIR + '/{db}/' + result
-        input: unpack(lambda wildcards: expand('{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out', m=get_dep_set(read_database_eval(wildcards.db)), dft=DATABASES[wildcards.db]['dfts'], e_DIR=ENERGIES_DIR)), # If somebody knows how to get this to span more than one line (instead of being a very ugly one-liner without comments), please let me know!
-        run:
-            DB=DATABASES[wildcards.db]
-            with open(output[0], 'w', newline='') as output_file:
-                csv_data = csv.writer(output_file, dialect='excel')
-                
-                if result == 'IndValues.csv':
-                    csv_data.writerow(['RefNames', 'DatasetRefNames', 'RefValues', *DB['dfts']])
-                else:
-                    csv_data.writerow(['RefNames', 'DatasetRefNames', *DB['dfts']])
-                
-                eval_points = read_database_eval(wildcards.db)
-                for point in eval_points:
-                    if result == 'IndValues.csv':
-                        # Note that we write everything in kcal/mol because these studies keep switching units without
-                        # ever actually LABELLING the units or specifying that a switch is happening. Oh well...
-                        csv_data.writerow([
-                            point["name"],
-                            point["dataset"],
-                            point["refval"] * hartree_to_kcal_mol,
-                            *map(lambda dft: get_full_energy(point, dft) * hartree_to_kcal_mol, DB['dfts'])
-                        ])
-                    else:
-                        csv_data.writerow([
-                            point["name"],
-                            point["dataset"],
-                            *map(lambda dft: get_runtime_seconds(point, dft), DB['dfts'])
-                        ])
+# All of the output files that need to be build for a complete database
+all_mol_outs = unpack(
+  lambda wildcards: expand(
+    '{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out',
+    m=get_dep_set(read_database_eval(wildcards.db)),
+    dft=DATABASES[wildcards.db]['dfts'],
+    e_DIR=ENERGIES_DIR
+  )
+)
+
+rule IND_VALUES:
+    # Generate the `IndValues.csv` file in the given output directory for the given database.
+    # `IndValues.csv` should replicate the results in `Database/{db}/IndValues.csv` to within ~10^(-6) Hartree at least.
+    output: OUTPUTS_DIR + '/{db}/IndValues.csv'
+    input: all_mol_outs
+    run:
+        DB=DATABASES[wildcards.db]
+        eval_points = read_database_eval(wildcards.db)
+        write_csv(
+          output[0],
+          RefNames        = map(lambda p: p["name"], eval_points),
+          DatasetRefNames = map(lambda p: p["dataset"], eval_points),
+          RefValues       = map(lambda p: p["refval"] * hartree_to_kcal_mol, eval_points),
+          **gen_output_rows(eval_points, DB['dfts'], scalef(get_full_energy, hartree_to_kcal_mol))
+        )
+rule RUN_TIMES:
+    # Generate the `RunTimes.csv` file in the given output directory for the given database.
+    output: OUTPUTS_DIR + '/{db}/RunTimes.csv'
+    input: all_mol_outs
+    run:
+        DB=DATABASES[wildcards.db]
+        eval_points = read_database_eval(wildcards.db)
+        write_csv(
+          output[0],
+          RefNames        = map(lambda p: p["name"], eval_points),
+          DatasetRefNames = map(lambda p: p["dataset"], eval_points),
+          **gen_output_rows(eval_points, DB['dfts'], get_runtime_seconds)
+        )
 
 rule QCENGINE_RUN:
-#This rule calls the program.
+    # Invoke the calculation program specified in your config file
     input:      '{out_DIR}/{dft}/{method}/{molecule}/mol.in'
     output:     '{out_DIR}/{dft}/{method}/{molecule}/mol.out'
     run:
         shell(config["QCENGINE_CALL"])
 
 rule QCENGINE_INPUT:
-#This rule writes the input file for the program of choice, based on the template given in the configfile
-    input:      '{out_DIR}/{dft}/{method}/{molecule}/.keep'
+    input:      GEOMETRIES_DIR + '/{molecule}.xyz'
     output:     '{out_DIR}/{dft}/{method}/{molecule}/mol.in'
     run:
+        # Make parent dirs if necessary
+        shell('mkdir -p {out_DIR}/{dft}/{method}/{molecule}/'.format(**wildcards))
+        
+        # Build the input file based on the molecular geometry and template file
         for file_name in output:
             molecule = wildcards.molecule
             dft = wildcards.dft
             method = METHODS[wildcards.method]
             template = TEMPL1
-            with open('tolaunch/{molecule}.xyz'.format(molecule=wildcards.molecule), 'r') as f:
+            with open(GEOMETRIES_DIR + '/{molecule}.xyz'.format(**wildcards), 'r') as f:
                 f.readline()                   # skip first line
                 molecule_data = f.read()[:-1]  # skip last NL
             with open(file_name, 'w') as f:
@@ -254,15 +296,3 @@ rule QCENGINE_INPUT:
                     params=method,
                 ))
 
-rule LAUNCH_DIR:
-#This rule copies the xyz from the source folder to the 'tolaunch' directory.
-      input:      GEOMETRIES_DIR + '/{molecule}.xyz'
-      output:     'tolaunch/{molecule}.xyz'
-      run:
-                  shell('cp {input} {output}')
-
-rule QCENGINE_DIRS:
-#This rule builds the input and output files.
-    input:      'tolaunch' + '/{molecule}.xyz'
-    output:     '{out_DIR}/{dft}/{method}/{molecule}/.keep'
-    shell:      'touch {output}'
