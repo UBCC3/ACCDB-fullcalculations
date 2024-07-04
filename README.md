@@ -39,6 +39,11 @@ its own. The software then computes the weighed sum of the individual datapoints
 `Outputs/<DB name>/IndValues.csv` in a way that should reproduce the `IndValues.csv` in the `Databases/` directory.
 5. Also, `RunTimes.csv` file is generated in a similar format with run times in seconds.
 
+## Modifications
+
+I'm working on a version to **make dispersion calculations more efficient/modular**. That is stored in the
+[dispersion branch](https://github.com/UBCC3/ACCDB-fullcalculations/tree/dispersion).
+
 ## How to Run
 
 The easiest way to use this software is probably to use our [Psi4 docker containers](https://github.com/UBCC3/psi4-docker-utils).
@@ -61,7 +66,7 @@ If you would like to make use of the parallel computing features (via Slurm), yo
 ```
 conda create -n accdb
 conda activate accdb
-conda install -c conda-forge -c bioconda psi4 snakemake snakemake-executor-plugin-slurm\
+conda install -c conda-forge -c bioconda psi4 snakemake snakemake-executor-plugin-slurm
 . fix_paths.sh
 screen -LS sn snakemake -j 64 --executor slurm --default-resources slurm_account=<your-slurm-act> --rerun-incomplete
 ```
