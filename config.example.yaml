@@ -3,7 +3,7 @@
 # Input Files Customization #
 # ------------------------- #
 
-#input files template
+#input files template filename -- See psi4.tmpl for an example
 TEMPL1: qcengine.tmpl
 
 #Number of processors for parallel jobs
@@ -39,6 +39,7 @@ DATABASES:
 # ------------------- #
 
 # Calculation methods; Basis and spherical points
+# This is a dictionary of name -> options. Options are passed as template args right to your .tmpl file.
 METHODS:
   def2-QZVPPD_99x590:
     basis: def2-QZVPPD
@@ -60,15 +61,20 @@ METHODS:
 # - POINT - Individual datapoints
 RULES:
   - match:
-      DATABASE: test_water
-    method: def2-QZVPPD_99x590
+      DATABASE: test_water # This rule matches the `test_water` database
+    method: def2-QZVPPD_99x590 # ...and sets the method to use a def2-QZVPPD basis set and others as defined above
+    # Override the energy scaling factor to get the right units... This study stores reference values in Hartree
+    # ... but the output is in kcal/mol... see the `UNITS` field below
+    units: { INP_DATASETEVAL: 1.0 }
   - match:
-      DATASET: ['AE18', 'RG10']
+      DATASET: ['AE18', 'RG10'] # Here, we match specific datasets -- The source study defines a different grid for these
       DATABASE: MGCDB84
     method: def2-QZVPPD_500x974
+    units: { INP_DATASETEVAL: 1.0 }
   - match:
-      DATABASE: MGCDB84
+      DATABASE: MGCDB84 # Note that the rule for the main database is placed after the more specific one as a "catch all"
     method: def2-QZVPPD_99x590
+    units: { INP_DATASETEVAL: 1.0 }
 
 # ---------------- #
 # Running the jobs #

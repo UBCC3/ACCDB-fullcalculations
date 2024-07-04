@@ -8,12 +8,77 @@
 [..         [..   [....     [....  [.....    [.... [..    
  ```
  
-ACCDB: A Collection of Chemistry DataBases
-==========================================
+# Full DFT Reference Calculation Tool
 
-# TODO: I am still in the process of modifying ACCDB; I will provide an overview here later
+This tool is based on [ACCDB v1.0](https://github.com/peverati/ACCDB/tree/master); Morgante, P; Peverati, R.; J Comput
+Chem, 2018, 40 (6), 839-848. [LINK](https://onlinelibrary.wiley.com/doi/abs/10.1002/jcc.25761).
 
-A collection of reliable, freely available, computational chemistry databases, and a set of tools for their manipulation and automation, released under GNU GPL license by Peverati's Theoretical and Computational Chemistry group at Florida Institute of Technology (TCC@FIT). ACCDB was created for the evaluation and parametrization of electronic structure theory methods (such as DFT and semi-empirical WFT methods), but it can be useful in many other areas of computational chemistry research (benchmarking, basis sets development and evaluation, data analysis, etc). **The total number of unique reference data points in ACCDB is 44,931** (all at a level of theory significantly higher than DFT), making it one of the largest collection of computed chemical energies at high-level accuracy.
+The original ACCDB could do single-point calculations of every datapoint in a dataset, but...
+1. You had to globally set all options other than the method and basis set -- Hence, manual configuration was required
+to replicate the results of the study.
+2. Only single point energies were calculated; A separate program was required to calculate the final output values
+based on the component single-point energies in `DatasetEval.csv`.
+3. No support files for compute clusters
+4. Didn't extract the runtime
+
+Our goal is to evaluate new DFTs (or, at least, newly implemented in the software) against a reference database. Hence,
+we needed the full calculation to be completed in a reproducible manner.
+
+See `config.example.yaml` for an example config file (comments are included to explain).
+
+Our modifications to ACCDB redesign the architecture to work in the following steps:
+1. First, you request the databases that you would like to build (stored in `Databases/`) as well as the DFTs (formerly
+*methods*) that you would like to include by placing them in the relevant `DATABASES` parameter.
+2. This software then reads the appropriate `DatasetEval.csv` file in the database to figure out which molecules need to
+be built.
+3. The `RULES` are used to pick out the appropriate `METHODS` (basis set & grid, currently) to build the datapoint for
+the database. Each single point energy is stored in `Energies/<DFT name>/<method>/<datapoint name>/mol.out`.
+4. Each row in `DatasetEval.csv` represents a weighed sum of component single-point calculations; For example, an
+interaction energy might be calculated by 1 times the energy of molecules together, minus the energy of each molecule on
+its own. The software then computes the weighed sum of the individual datapoints, and places the output in
+`Outputs/<DB name>/IndValues.csv` in a way that should reproduce the `IndValues.csv` in the `Databases/` directory.
+5. Also, `RunTimes.csv` file is generated in a similar format with run times in seconds.
+
+## How to Run
+
+The easiest way to use this software is probably to use our [Psi4 docker containers](https://github.com/UBCC3/psi4-docker-utils).
+A `docker-compose` file is provided, so simply run:
+```
+docker-compose run snakemake_psi4
+```
+Using Docker helps make sure we have a consistent and reproducible calculation environment, in addition to making it
+easy to swap the runtime version of Psi4 for development purposes. However, using Docker isn't always possible (such as
+on university computing clusters). The most universal way to run this software is with Conda. At the time of writing,
+that looks like:
+```
+conda create -n accdb
+conda activate accdb
+conda install -c conda-forge -c bioconda psi4 snakemake
+snakemake
+```
+
+If you would like to make use of the parallel computing features (via Slurm), you could run:
+```
+conda create -n accdb
+conda activate accdb
+conda install -c conda-forge -c bioconda psi4 snakemake snakemake-executor-plugin-slurm\
+. fix_paths.sh
+screen -LS sn snakemake -j 64 --executor slurm --default-resources slurm_account=<your-slurm-act> --rerun-incomplete
+```
+...which creates a GNU screen running Snakemake with the Slurm executor for 64 parallel calculations. The GNU screen
+ensures that you can log out without killing Snakemake and come back in a few days. Simply resume the screen with
+`screen -r sn` (note that I made `sn` the name of the screen). When you're in the screen, press `Ctrl+A D` to exit. A
+logfile is also generated in `screenlog.0`. You can use `tail -f screenlog.0` to follow along without actually entering
+the screen.
+
+It is also necessary to **source fix_paths.sh** in order to work around read-only filesystems on many compute clusters;
+Snakemake puts its cache and temp files in your home directory by default. `fix_paths.sh` fixes that by placing them in
+`.tmp` in your local directory. Note that:
+1. The `.tmp` file will be placed in whichever directory you run the script from
+2. You **MUST** source the file (via `. fix_paths.sh` or `source fix_paths.sh`), not simply run it; Otherwise, the
+environment variable changes are not captured.
+
+**Note that you will probably need/want to customize the Slurm options a bit more, possibly by modifying the Snakefile itself!**
 
 ## The current version of ACCDB is v1.0 and it includes the following databases:
 - **MGCDB84**: Head-Gordon's database, version 2017 [4,986 data in 91 subsets].
@@ -24,23 +89,6 @@ A collection of reliable, freely available, computational chemistry databases, a
 - **W4-17**: Martin's Weizman 2017 database [1,042 data in 5 subsets].
 
 PLEASE READ CAREFULLY THE "**HOW TO CITE**" SECTION BELOW WHEN CITING ANY OF THE DATABASES COLLECTED HERE!
-
-## Structure
-ACCDB is composed of the following directories:
-- **Automation**: Containing all snakemake file to automate calculations.
-- **Databases**: Main directory containing all the reference data (DatasetEval.csv), the list of the molecules pertaining to each database (Database.list), and the original citation (README.md) for all databases, organized in subdirectories.
-- **Geometries**: Containing all geometries for single-point energy calculations, in xyz file format (including charge and spin multiplicity).
-
-ACCDB contains 10,049 geometry files in xyz format that require single-point energy calculations. These calculations will result in 8,656 "traditional" unique reference data points. Two new large reaction energies databases have been obtained using automatic generation, based on W4-17 and Minnesota, containing further 36,275 "non-traditional" reference data points (27,140 in W4-17-RE, and 9,135 in MN-RE).
-
-The reference energies for each database or set are reported in a csv file named DatasetEval.csv (3 equivalent files are available in each directory, with reference energies in Eh, kcal/mol, and kJ/mol). In general, reference values have been obtained with high-level theoretical calculations, refer to each set for details. Each csv file also includes the stoichiometry coefficients and reference to the corresponding filename in the Geometries directory for each unique reference data point, and can be easily parsed for calculation of statistics.
-The list of the molecules pertaining to each database or set are also reported, and can be used to extract the relevant xyz files from the **Geometries** directory.
-
-A full description of each database or set is given in the README file in the **Database** directory, including credits to the original work where it was first introduced. Please do read each of them carefully, especially when citing the data in published scientific materials. In case you have any doubts about citations when using any of the databases reported here, please do give credit to the original work **before** giving credit to us and this work. Credit to ACCDB and TCC@FIT is appreciated, but credit to the original author(s) is mandatory.
-
-## Automation
-
-Automation of the jobs and calculation of the statistics is achieved through snakemake workflows. Refer to the README in the **Automation** directory for detailed instructions on how to use it, modify it, and extend it.
 
 ## How to cite:
 This work is published under GNU-GPL license and credit must be given to the authors of the original material, as appropriate. Most of the databases are collected from free sources on the internet, and we act only as a central repository for them. (If you are the author or the owner of one of such databases and want your data to be excluded from this repository, please do contact us, and we will remove it immediately.)
@@ -60,16 +108,4 @@ If you are using MN-RE or W4-17-RE you should cite the ACCDB project (see below)
 *The reference for the ACCDB project is*: 
 
 Morgante, P; Peverati, R.; J Comput Chem, 2018, 40 (6), 839-848. [LINK](https://onlinelibrary.wiley.com/doi/abs/10.1002/jcc.25761)
-
-
-## Versions:
-
-**v1.0 (08.2018)**: Initial public release
-
-*v0.3 (07.2018)*: Addition of GMTKN
-
-*v0.2 (06.2018)*: New Metals section with many subsets
-
-*v0.1 (04.2018)*: Initial internal release
-
 

@@ -187,7 +187,7 @@ def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
         s += seconds
     return s
 
-def gen_output_rows(points, headers, handler, scalefactor=1.0):
+def gen_output_rows(points, headers, handler):
     """
         Given a list of input `headers`, generate entries in a dict. Each entry is an array of mapped `points`, which
         are mapped by calling `handler` with (point, header) as arguments. Useful for, say, making a spreadsheet with
@@ -222,6 +222,7 @@ def write_csv(file, **kwargs):
 #                                                       RULES                                                          #
 # -------------------------------------------------------------------------------------------------------------------- #
 
+# No need to run simple calculations on a cluster; This would take longer than running locally
 localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_INPUT
 
 rule ALL:
@@ -275,8 +276,8 @@ rule QCENGINE_RUN:
     # Config for running remotely (ex, in a Slurm cluster)
     resources:
         cpus_per_task=4,
-        mem="4G",
-        runtime=60,
+        mem="16G",
+        runtime=240,
         nodes=1,
         tasks=1,
     run:

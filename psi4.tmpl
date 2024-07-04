@@ -1,5 +1,14 @@
 memory 600 mb
 
+# Override Psi4's temporary directory when running on a Slurm cluster
+# This is necessary on our university's cluster to make use of disk-based methods for largeish molecules
+scratch_dir = os.environ.get('TMPDIR')
+if scratch_dir:
+    psi4_io.set_default_path(scratch_dir + '/')
+else:
+    #raise RuntimeError("Snakemake is not providing slurm environment variables!")
+    pass
+
 molecule {{
 {molecule_data}
 }}

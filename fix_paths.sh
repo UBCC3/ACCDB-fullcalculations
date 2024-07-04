@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 # Makes sure Snakemake only writes to the current directory
 # By default, Snakemake uses cache paths determined by the deprecated `appdirs` package, which ends up being in the
 # current user's home dir. Problem is, this doesn't work in a cluster environment (home dir is RO).
