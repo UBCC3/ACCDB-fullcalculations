@@ -20,6 +20,7 @@ to replicate the results of the study.
 based on the component single-point energies in `DatasetEval.csv`.
 3. No support files for compute clusters
 4. Didn't extract the runtime
+5. Units didn't match the source units of the study
 
 Our goal is to evaluate new DFTs (or, at least, newly implemented in the software) against a reference database. Hence,
 we needed the full calculation to be completed in a reproducible manner.
@@ -84,6 +85,45 @@ Snakemake puts its cache and temp files in your home directory by default. `fix_
 environment variable changes are not captured.
 
 **Note that you will probably need/want to customize the Slurm options a bit more, possibly by modifying the Snakefile itself!**
+
+## Using other software
+Following the modular approach of ACCDB, software other than Psi4 can be used. Simply create a `.tmpl` file for the
+software input, then change the `QCENGINE_CALL` command and the two `REGEXP`s. Examples of other software usage has not
+been provided, sorry.
+
+## Units, units, units...
+A large problem that we encountered was the different units between databases, software, and even within the same
+database. For example, `MGCDB84` places reference values in `DatasetEval.csv` in Hartrees, but final values in
+`IndValues.csv` are stored in kcal/mol instead. These issues are mitigated by the `UNITS` field in the config file --
+While the software works in Hartrees internally, every unit going in and out of this software is convered according to
+the scaling factors set in `UNITS` below, which can be obtained from the first *row* of [this table](https://ryutok.github.io/EnergyConversionTable/).
+```yaml
+# A method for dealing with the different units being thrown around everywhere
+# Energy of 1 Hartree in the designated unit. For Psi4, this is 1.0 since it outputs in Hartrees.
+# If your software outputs in eV, for example, this would be 27.211396641308 Hartrees/eV
+# Find this in the first ROW of https://ryutok.github.io/EnergyConversionTable/
+UNITS:
+  # Energy scaling factor for the output of your program
+  INP_QCENGINE: 1.0 # Psi4 1.0 Hartree/Hartree
+  # Energy scaling factor for the study's reference values stored in DatasetEval.csv
+  INP_DATASETEVAL: null # Set per-database above.
+  
+  # Energy scaling factor for what YOU want IndValues.csv to be in
+  # Be aware that this must be set correctly to directly reproduce the values of studies!
+  OUT_INDVALUES: 627.509 # Units switch once again: 627.509 Hartrees/kcal/mol
+```
+
+The value for `INP_DATASETEVAL` can also be overridden in the `RULES` field like so:
+```yaml
+RULES:
+  ...
+  - match:
+      DATABASE: MGCDB84
+    method: def2-QZVPPD_99x590
+    units: { INP_DATASETEVAL: 1.0 }
+  ...
+```
+This allows you to set the units properly per-study.
 
 ## The current version of ACCDB is v1.0 and it includes the following databases:
 - **MGCDB84**: Head-Gordon's database, version 2017 [4,986 data in 91 subsets].
