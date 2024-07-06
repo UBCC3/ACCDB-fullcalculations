@@ -21,6 +21,7 @@ based on the component single-point energies in `DatasetEval.csv`.
 3. No support files for compute clusters
 4. Didn't extract the runtime
 5. Units didn't match the source units of the study
+6. Calculation of multiple DFTs differing only in dispersion is very inefficient as it requires a full SCF cycle
 
 Our goal is to evaluate new DFTs (or, at least, newly implemented in the software) against a reference database. Hence,
 we needed the full calculation to be completed in a reproducible manner.
@@ -33,17 +34,20 @@ Our modifications to ACCDB redesign the architecture to work in the following st
 2. This software then reads the appropriate `DatasetEval.csv` file in the database to figure out which molecules need to
 be built.
 3. The `RULES` are used to pick out the appropriate `METHODS` (basis set & grid, currently) to build the datapoint for
-the database. Each single point energy is stored in `Energies/<DFT name>/<method>/<datapoint name>/mol.out`.
-4. Each row in `DatasetEval.csv` represents a weighed sum of component single-point calculations; For example, an
+the database. Each single point energy is stored in `Wavefunctions/<DFT name>/<method>/<datapoint name>/mol.out`.
+  a. In addition to the energy (in `mol.out`), the wavefunction is exported to `mol.wf`
+4. Similarly, calculations are then done using those wavefunction files to get the dispersion energy for each single
+point and stored in `Dispersion/<DFT name>/<dispersion>/<method>/<datapoint name>/mol.out`
+5. Each row in `DatasetEval.csv` represents a weighed sum of component single-point calculations; For example, an
 interaction energy might be calculated by 1 times the energy of molecules together, minus the energy of each molecule on
 its own. The software then computes the weighed sum of the individual datapoints, and places the output in
 `Outputs/<DB name>/IndValues.csv` in a way that should reproduce the `IndValues.csv` in the `Databases/` directory.
-5. Also, `RunTimes.csv` file is generated in a similar format with run times in seconds.
+6. Also, `RunTimes.csv` file is generated in a similar format with run times in seconds.
 
 ## Modifications
 
-I'm working on a version to **make dispersion calculations more efficient/modular**. That is stored in the
-[dispersion branch](https://github.com/UBCC3/ACCDB-fullcalculations/tree/dispersion).
+I'm working on a version to **make dispersion calculations more efficient/modular**. You're looking at it. Click
+[here](https://github.com/UBCC3/ACCDB-fullcalculations/tree/master) to go back to the master branch.
 
 ## How to Run
 

@@ -37,9 +37,15 @@ OUTPUTS_DIR: Outputs
 # With each database, a list of DFTs to evaluate is provided
 DATABASES:
   test_water:
-    dfts:
+    dfts: # Here, we list out our DFTs...
+      # Dict of dft name -> dispersion corrections
+      # Use `null` for no dispersion
       B3LYP: [null, "D2", "D3", "D3ZERO"]
       PBE0: [null, "D2", "D3", "D3ZERO"]
+      # Note that VV10 dispersion (or rVV10, for that matter) CANNOT be added to the dispersion list!
+      # The behavior is undefined if you do...
+      # You MUST define it as its own SCF calculation:
+      # wB97x-V: [null]
 
 # ------------------- #
 # Calculation Methods #
