@@ -37,7 +37,8 @@ wildcard_constraints:
 # Input/output directories
 DATABASES_DIR = config['DATABASES_DIR']
 GEOMETRIES_DIR = config['GEOMETRIES_DIR']
-ENERGIES_DIR=config['ENERGIES_DIR']
+WAVEFUNCTIONS_DIR=config['WAVEFUNCTIONS_DIR']
+DISPERSION_DIR=config['DISPERSION_DIR']
 OUTPUTS_DIR=config['OUTPUTS_DIR']
 
 DATABASES = config['DATABASES']
@@ -46,7 +47,9 @@ METHODS = config['METHODS']
 RULES = config['RULES']
 
 # TEMPL1 = 'qcengine.tmpl'
-TEMPL1 = config['TEMPL1']
+TEMPLWF = config['TEMPLS']['WF']
+TEMPLDISP = config['TEMPLS']['DISP']
+REGEX = config['REGEXPS']
 
 # NUMBER OF PROCESSORS/CORES/THREADS
 nproc = config['PROC']
@@ -132,6 +135,23 @@ def read_database_eval(db, rules=RULES, db_dir=DATABASES_DIR, csv_name='DatasetE
             return obj
         return [*map(evalRow, filter(lambda r: len(r) > 1, evalreader))]
 
+def get_dfts(dft_map, include_nulldisp = False):
+    """
+        Returns a set of tuples of (base dft, dispersion) from a DFT -> dispersion list map.
+        No dispersion (null, '', False) is removed.
+    """
+    s = set()
+    for dft in dft_map.keys():
+        for disp in dft_map[dft]:
+            if not disp or disp is None or disp == '':
+                if include_nulldisp: disp = None
+                else: continue
+            s.add((dft, disp))
+    return s
+
+def get_dft_name(dft):
+    return str(dft[0]) if dft[1] is None else "{}-{}".format(*dft)
+
 def get_dep_set(points):
     """
         Returns a set of dependency calculations for a list of points returned by `read_database_eval`. Each point is a
@@ -145,38 +165,45 @@ def get_dep_set(points):
 
 def get_regex_result(regexp, *path):
     "Find the last instance of `regexp` in the `mol.out` file at `*path`."
-    with open(os.path.join(*path, 'mol.out'), 'r') as qcengine_out:
+    with open(os.path.join(*path), 'r') as qcengine_out:
         # we are only interested in the last occurrence
         # https://stackoverflow.com/a/54277955/7853604
         match = None
         for m in re.finditer(regexp, qcengine_out.read()): match = m.groupdict()
         return match
 
-def get_full_energy(point, dft, energy_out_dir=ENERGIES_DIR):
+def get_full_energy(point, dft, base_out_dir=WAVEFUNCTIONS_DIR, energy_out_dir=DISPERSION_DIR):
     """
         Calculate the complete energy of `point` based on the provided output files. All of the molecular geometries
         that make up `point` are considered and are summed with their leading coeffficients.
     """
-    engine_exp = config["REGEXP"]
+    engine_exp = REGEX["ENERGY"]
+    disp_exp = REGEX["DISP"]
     energy_exp = '(?P<energy>[-+]?\d+\.\d+)'
-    total_exp = re.compile(engine_exp + energy_exp)
+    te_exp = re.compile(engine_exp + energy_exp)
+    td_exp = re.compile(disp_exp + energy_exp)
     
     s = 0
     for i in range(len(point['deps'])):
-        re_res = get_regex_result(total_exp, energy_out_dir, dft, point['method'], point['deps'][i])
-        s += point['coeffs'][i] * float(re_res['energy']) / units['INP_QCENGINE'] # Divide since units are coming in
-    return s
+        re_res = get_regex_result(te_exp, base_out_dir, dft[0], point['method'], point['deps'][i], 'mol.out')
+        s += point['coeffs'][i] * float(re_res['energy'])
 
-def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
+        if not dft[1] is None:
+            re_res = get_regex_result(td_exp, energy_out_dir, dft[0], dft[1], point['method'], point['deps'][i], 'disp.out')
+            print(dft[0], dft[1], point['deps'][i], re_res['energy'])
+            s += point['coeffs'][i] * float(re_res['energy'])
+
+    return s / units['INP_QCENGINE'] # Divide since units are coming in
+
+def get_runtime_seconds(point, dft, base_out_dir=WAVEFUNCTIONS_DIR, energy_out_dir=DISPERSION_DIR):
     """
         Calculate the runtime of `point` based on the provided output files in seconds. The runtimes of each component
         molecule are considered.
     """
-    total_exp = re.compile(config["TIME_REGEXP"])
-    
-    s = 0
-    for i in range(len(point['deps'])):
-        re_res = get_regex_result(total_exp, energy_out_dir, dft, point['method'], point['deps'][i])
+    total_exp = re.compile(REGEX["TIME"])
+
+    def getTimeFor(*path):
+        re_res = get_regex_result(total_exp, *path)
         # Find total in seconds based on all available named groups; Note that they're all optional, but one needs to
         # be specified to get a non-zero answer of course
         days =     float(re_res['days'])    if 'days'    in re_res else 0
@@ -184,18 +211,28 @@ def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
         minutes = (float(re_res['minutes']) if 'minutes' in re_res else 0) + 60 * hours
         seconds = (float(re_res['seconds']) if 'seconds' in re_res else 0) + 60 * minutes
         seconds += (float(re_res['millis']) if 'millis'  in re_res else 0) / 1000.0
-        s += seconds
+        return seconds
+    
+    s = 0
+    for i in range(len(point['deps'])):
+        s += getTimeFor(base_out_dir, dft[0], point['method'], point['deps'][i], 'mol.out')
+        if not dft[1] is None:
+            s += getTimeFor(energy_out_dir, dft[0], dft[1], point['method'], point['deps'][i], 'disp.out')
     return s
 
-def gen_output_rows(points, headers, handler):
+def gen_output_rows(points, headers, handler, header_stringifier=None):
     """
         Given a list of input `headers`, generate entries in a dict. Each entry is an array of mapped `points`, which
         are mapped by calling `handler` with (point, header) as arguments. Useful for, say, making a spreadsheet with
         several parameters.
     """
     gen_column = lambda header: [handler(point, header) for point in points]
+
+    header_names = headers
+    if not header_stringifier is None:
+        header_names = [header_stringifier(h) for h in headers]
     
-    return dict(zip(headers, map(gen_column, headers)))
+    return dict(zip(header_names, map(gen_column, headers)))
 
 def write_csv(file, **kwargs):
     """
@@ -223,7 +260,7 @@ def write_csv(file, **kwargs):
 # -------------------------------------------------------------------------------------------------------------------- #
 
 # No need to run simple calculations on a cluster; This would take longer than running locally
-localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_INPUT
+localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_RUN_DISP, QCENGINE_INPUT_DISP, QCENGINE_INPUT_MOL
 
 rule ALL:
     input:
@@ -233,10 +270,10 @@ rule ALL:
 # All of the output files that need to be build for a complete database
 all_mol_outs = unpack(
     lambda wildcards: expand(
-        '{e_DIR}/{dft}/{m[0]}/{m[1]}/mol.out',
+        '{d_DIR}/{dft[0]}/{dft[1]}/{m[0]}/{m[1]}/disp.out',
         m=get_dep_set(read_database_eval(wildcards.db)),
-        dft=DATABASES[wildcards.db]['dfts'],
-        e_DIR=ENERGIES_DIR
+        dft=get_dfts(DATABASES[wildcards.db]['dfts']),
+        d_DIR=DISPERSION_DIR
     )
 )
 
@@ -248,12 +285,13 @@ rule IND_VALUES:
     run:
         DB=DATABASES[wildcards.db]
         eval_points = read_database_eval(wildcards.db)
+        dfts = get_dfts(DB["dfts"], include_nulldisp=True)
         write_csv(
             output[0],
             RefNames        = map(lambda p: p["name"], eval_points),
             DatasetRefNames = map(lambda p: p["dataset"], eval_points),
             RefValues       = map(lambda p: p["refval"] * units["OUT_INDVALUES"], eval_points), # Units going OUT -> Multiply
-            **gen_output_rows(eval_points, DB["dfts"], scalef(get_full_energy, units["OUT_INDVALUES"]))
+            **gen_output_rows(eval_points, dfts, scalef(get_full_energy, units["OUT_INDVALUES"]), get_dft_name)
         )
 rule RUN_TIMES:
     # Generate the `RunTimes.csv` file in the given output directory for the given database.
@@ -262,17 +300,34 @@ rule RUN_TIMES:
     run:
         DB=DATABASES[wildcards.db]
         eval_points = read_database_eval(wildcards.db)
+        dfts = get_dfts(DB["dfts"], include_nulldisp=True)
         write_csv(
             output[0],
             RefNames        = map(lambda p: p["name"], eval_points),
             DatasetRefNames = map(lambda p: p["dataset"], eval_points),
-            **gen_output_rows(eval_points, DB["dfts"], get_runtime_seconds)
+            **gen_output_rows(eval_points, dfts, get_runtime_seconds, get_dft_name)
         )
 
-rule QCENGINE_RUN:
+rule QCENGINE_RUN_DISP:
     # Invoke the calculation program specified in your config file
-    input:      '{out_DIR}/{dft}/{method}/{molecule}/mol.in'
-    output:     '{out_DIR}/{dft}/{method}/{molecule}/mol.out'
+    input: '{out_DIR}/{dft}/{disp}/{method}/{molecule}/disp.in'
+    output: rawout='{out_DIR}/{dft}/{disp}/{method}/{molecule}/disp.out'
+    # Config for running remotely (ex, in a Slurm cluster)
+    # Note: I've disabled this with the above `localrules`... These take basically no time
+    # Faster to run on host than submit to cluster
+    #resources:
+    #    cpus_per_task=4,
+    #    mem="16G",
+    #    runtime=240,
+    #    nodes=1,
+    #    tasks=1,
+    run:
+        shell(config["QCENGINE_CALL"])
+
+rule QCENGINE_RUN_WF:
+    # Invoke the calculation program specified in your config file
+    input: '{out_DIR}/{dft}/{method}/{molecule}/mol.in'
+    output: wfout='{out_DIR}/{dft}/{method}/{molecule}/mol.wf', rawout='{out_DIR}/{dft}/{method}/{molecule}/mol.out'
     # Config for running remotely (ex, in a Slurm cluster)
     resources:
         cpus_per_task=4,
@@ -283,7 +338,35 @@ rule QCENGINE_RUN:
     run:
         shell(config["QCENGINE_CALL"])
 
-rule QCENGINE_INPUT:
+rule QCENGINE_INPUT_DISP:
+    input:      WAVEFUNCTIONS_DIR + '/{dft}/{method}/{molecule}/mol.wf'
+    output:     '{out_DIR}/{dft}/{disp}/{method}/{molecule}/disp.in'
+    run:
+        # Make parent dirs if necessary
+        shell('mkdir -p {out_DIR}/{dft}/{disp}/{method}/{molecule}/'.format(**wildcards))
+        
+        # Build the input file based on the molecular geometry and template file
+        for file_name in output:
+            molecule = wildcards.molecule
+            dft = wildcards.dft
+            disp = wildcards.disp
+            method = METHODS[wildcards.method]
+            template = TEMPLDISP
+            with open(GEOMETRIES_DIR + '/{molecule}.xyz'.format(**wildcards), 'r') as f:
+                f.readline()                   # skip first line
+                molecule_data = f.read()[:-1]  # skip last NL
+            with open(file_name, 'w') as f:
+                f.write(open(template).read().format(
+                    dft=dft,
+                    disp=disp,
+                    molecule=molecule,
+                    molecule_data=molecule_data,
+                    nproc=nproc,
+                    params=method,
+                    wfn_file=WAVEFUNCTIONS_DIR + '/{dft}/{method}/{molecule}/mol.wf'.format(**wildcards),
+                ))
+
+rule QCENGINE_INPUT_MOL:
     input:      GEOMETRIES_DIR + '/{molecule}.xyz'
     output:     '{out_DIR}/{dft}/{method}/{molecule}/mol.in'
     run:
@@ -295,7 +378,7 @@ rule QCENGINE_INPUT:
             molecule = wildcards.molecule
             dft = wildcards.dft
             method = METHODS[wildcards.method]
-            template = TEMPL1
+            template = TEMPLWF
             with open(GEOMETRIES_DIR + '/{molecule}.xyz'.format(**wildcards), 'r') as f:
                 f.readline()                   # skip first line
                 molecule_data = f.read()[:-1]  # skip last NL
@@ -306,5 +389,5 @@ rule QCENGINE_INPUT:
                     molecule_data=molecule_data,
                     nproc=nproc,
                     params=method,
+                    wfn_file='{out_DIR}/{dft}/{method}/{molecule}/mol.wf'.format(**wildcards),
                 ))
-

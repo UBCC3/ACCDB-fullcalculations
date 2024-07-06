@@ -3,8 +3,10 @@
 # Input Files Customization #
 # ------------------------- #
 
-#input files template filename -- See psi4.tmpl for an example
-TEMPL1: qcengine.tmpl
+#input files template
+TEMPLS:
+  WF: qce_wf.tmpl
+  DISP: qce_disp.tmpl
 
 #Number of processors for parallel jobs
 PROC: 4
@@ -19,8 +21,11 @@ DATABASES_DIR: Databases
 #Directory containing all xyz files (full or relative path)
 GEOMETRIES_DIR: Geometries
 
-#Where raw output energies are stored for a given DFT, basis, and method
-ENERGIES_DIR: Energies
+#Where intermediate wavefunctions are stored for a given DFT, basis, and method
+WAVEFUNCTIONS_DIR: Wavefunctions
+
+#Where raw output energies are stored for a given dispersion, DFT, basis, and method
+DISPERSION_DIR: Dispersion
 
 #Directory where the output file structures is created (full or relative path)
 OUTPUTS_DIR: Outputs
@@ -32,7 +37,9 @@ OUTPUTS_DIR: Outputs
 # With each database, a list of DFTs to evaluate is provided
 DATABASES:
   test_water:
-    dfts: ["B3LYP", "PBE0"]
+    dfts:
+      B3LYP: [null, "D2", "D3", "D3ZERO"]
+      PBE0: [null, "D2", "D3", "D3ZERO"]
 
 # ------------------- #
 # Calculation Methods #
@@ -61,18 +68,16 @@ METHODS:
 # - POINT - Individual datapoints
 RULES:
   - match:
-      DATABASE: test_water # This rule matches the `test_water` database
-    method: def2-QZVPPD_99x590 # ...and sets the method to use a def2-QZVPPD basis set and others as defined above
-    # Override the energy scaling factor to get the right units... This study stores reference values in Hartree
-    # ... but the output is in kcal/mol... see the `UNITS` field below
+      DATABASE: test_water
+    method: def2-QZVPPD_99x590
     units: { INP_DATASETEVAL: 1.0 }
   - match:
-      DATASET: ['AE18', 'RG10'] # Here, we match specific datasets -- The source study defines a different grid for these
+      DATASET: ['AE18', 'RG10']
       DATABASE: MGCDB84
     method: def2-QZVPPD_500x974
     units: { INP_DATASETEVAL: 1.0 }
   - match:
-      DATABASE: MGCDB84 # Note that the rule for the main database is placed after the more specific one as a "catch all"
+      DATABASE: MGCDB84
     method: def2-QZVPPD_99x590
     units: { INP_DATASETEVAL: 1.0 }
 
@@ -81,18 +86,15 @@ RULES:
 # ---------------- #
 
 #Call to the quantum chemistry program
-QCENGINE_CALL: "psi4 -n {nproc} {input} {output}"   # Psi4
+QCENGINE_CALL: "psi4 -n {nproc} {input} {output.rawout}"   # Psi4
           # "g16 {input} {output}"                 #Gaussian
 
-#regexp to extract final energies from output files
-REGEXP: '    Total Energy =\s*' # Psi4
-      # 'SCF Done:  E({method}) =  '                # Gaussian
-
-#regexp to extract the runtime from output files
-#Can be tested with something like https://regex101.com/; Beware, group naming syntax is not standard; Use the Python
-#  standard for naming groups: (?P<name>...) instead of (?<name>...)
-#Valid group names are days, hours, minutes, seconds, millis (self-explanatory)
-TIME_REGEXP: '\s*Psi4 wall time for execution:\s*(?P<hours>[0-9]+):(?P<minutes>[0-9]+):(?P<seconds>[0-9\.]+)'
+REGEXPS:
+  #regexp to extract final energies from output files
+  ENERGY: '    Total Energy =\s*' # Psi4
+        # 'SCF Done:  E({method}) =  '                # Gaussian
+  DISP: 'Computed Dispersion Energy:\s*'
+  TIME: '\s*Psi4 wall time for execution:\s*(?P<hours>[0-9]+):(?P<minutes>[0-9]+):(?P<seconds>[0-9\.]+)'
 
 # A method for dealing with the different units being thrown around everywhere
 # Energy of 1 Hartree in the designated unit. For Psi4, this is 1.0 since it outputs in Hartrees.

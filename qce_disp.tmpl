@@ -1,0 +1,36 @@
+memory 600 mb
+import numpy as np
+
+# Override Psi4's temporary directory when running on a Slurm cluster
+# This is necessary on our university's cluster to make use of disk-based methods for largeish molecules
+scratch_dir = os.environ.get('TMPDIR')
+if scratch_dir:
+    psi4_io.set_default_path(scratch_dir + '/')
+else:
+    #raise RuntimeError("Snakemake is not providing slurm environment variables!")
+    pass
+
+molecule {{
+{molecule_data}
+}}
+
+set basis {params[basis]}
+set reference {params[reference]}
+set DFT_SPHERICAL_POINTS {params[spherical_points]}
+set DFT_RADIAL_POINTS {params[radial_points]}
+
+disp = '{disp}'
+
+# Once again, both numpy as Psi4 force the .npy extension
+with open('{wfn_file}', 'rb') as f: wfn = psi4.core.Wavefunction.from_file(f)
+
+(sup, disp) = psi4.driver.dft.build_superfunctional(('{dft}-'+disp) if disp else '{dft}', False)
+edisp = psi4.driver.EmpiricalDispersion(
+    name_hint=sup.name(),
+    level_hint=disp["type"],
+    param_tweaks=None,
+    save_pairwise_disp=False,
+    engine=None # Automatic from the type above
+)
+de = edisp.compute_energy(wfn.molecule(), wfn)
+core.print_out("Computed Dispersion Energy: {{:f}}".format(de))

@@ -1,0 +1,29 @@
+memory 600 mb
+import numpy as np
+
+# Override Psi4's temporary directory when running on a Slurm cluster
+# This is necessary on our university's cluster to make use of disk-based methods for largeish molecules
+scratch_dir = os.environ.get('TMPDIR')
+if scratch_dir:
+    psi4_io.set_default_path(scratch_dir + '/')
+else:
+    #raise RuntimeError("Snakemake is not providing slurm environment variables!")
+    pass
+
+molecule {{
+{molecule_data}
+}}
+
+set basis {params[basis]}
+set reference {params[reference]}
+set DFT_SPHERICAL_POINTS {params[spherical_points]}
+set DFT_RADIAL_POINTS {params[radial_points]}
+energy, wfn = energy('{dft}',return_wfn=True)
+
+# Psi4 annoyingly forces a .npy extension, which Snakemake doesn't know about
+# So, these lines are copied from the Psi4 source, but without the forced .npy
+wfn_data = wfn.to_file()
+# In fact, numpy as well will force the addition of the npy extension as well
+# So the only way is to literally open the file myself, that way nobody can mess with the name
+with open('{wfn_file}', 'wb') as f:
+    np.save(f, wfn_data, allow_pickle=True)

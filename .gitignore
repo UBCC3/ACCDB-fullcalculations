@@ -6,7 +6,8 @@ psi.*.clean
 timer.dat
 
 # Output files
-Energies/
+Wavefunctions/
+Dispersion/
 Outputs/
 tolaunch/
 
