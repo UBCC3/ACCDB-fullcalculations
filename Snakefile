@@ -190,7 +190,6 @@ def get_full_energy(point, dft, base_out_dir=WAVEFUNCTIONS_DIR, energy_out_dir=D
 
         if not dft[1] is None:
             re_res = get_regex_result(td_exp, energy_out_dir, dft[0], dft[1], point['method'], point['deps'][i], 'disp.out')
-            print(dft[0], dft[1], point['deps'][i], re_res['energy'])
             s += point['coeffs'][i] * float(re_res['energy'])
 
     return s / units['INP_QCENGINE'] # Divide since units are coming in
@@ -268,7 +267,7 @@ rule ALL:
         expand('{out_DIR}/{db}/RunTimes.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR)
 
 # All of the output files that need to be build for a complete database
-all_mol_outs = unpack(
+all_mol_outs_disp = unpack(
     lambda wildcards: expand(
         '{d_DIR}/{dft[0]}/{dft[1]}/{m[0]}/{m[1]}/disp.out',
         m=get_dep_set(read_database_eval(wildcards.db)),
@@ -276,12 +275,20 @@ all_mol_outs = unpack(
         d_DIR=DISPERSION_DIR
     )
 )
+all_mol_outs_wf = unpack(
+    lambda wildcards: expand(
+        '{w_DIR}/{dft}/{m[0]}/{m[1]}/mol.out',
+        m=get_dep_set(read_database_eval(wildcards.db)),
+        dft=DATABASES[wildcards.db]['dfts'].keys(),
+        w_DIR=WAVEFUNCTIONS_DIR
+    )
+)
 
 rule IND_VALUES:
     # Generate the `IndValues.csv` file in the given output directory for the given database.
     # `IndValues.csv` should replicate the results in `Database/{db}/IndValues.csv` to within ~10^(-6) Hartree at least.
     output: OUTPUTS_DIR + '/{db}/IndValues.csv'
-    input: all_mol_outs
+    input: all_mol_outs_wf, all_mol_outs_wf
     run:
         DB=DATABASES[wildcards.db]
         eval_points = read_database_eval(wildcards.db)
@@ -296,7 +303,7 @@ rule IND_VALUES:
 rule RUN_TIMES:
     # Generate the `RunTimes.csv` file in the given output directory for the given database.
     output: OUTPUTS_DIR + '/{db}/RunTimes.csv'
-    input: all_mol_outs
+    input: all_mol_outs_wf, all_mol_outs_wf
     run:
         DB=DATABASES[wildcards.db]
         eval_points = read_database_eval(wildcards.db)

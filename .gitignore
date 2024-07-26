@@ -8,6 +8,7 @@ timer.dat
 # Output files
 Wavefunctions/
 Dispersion/
+Energies/
 Outputs/
 tolaunch/
 
