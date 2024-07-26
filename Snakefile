@@ -61,6 +61,11 @@ units = config['UNITS']
 #                                                  SUPPORT FUNCTIONS                                                   #
 # -------------------------------------------------------------------------------------------------------------------- #
 
+def mean(l): return sum(l) / len(l)
+def meanabs(l): return mean([*map(abs, l)])
+def rms(l): return mean([*map(lambda n: n**2.0, l)])**0.5
+def maxabs(l): return max(map(abs, l))
+
 def scalef(f, scale):
     """Returns a function that calls `f` and multiplies its output by `scale`."""
     return lambda *args, **kwargs: f(*args, **kwargs) * scale
@@ -92,14 +97,10 @@ def evaluate_rules(rules, **attribs):
 def read_database_eval(db, rules=RULES, db_dir=DATABASES_DIR, csv_name='DatasetEval.csv'):
     """
         Parse a `DatasetEval.csv` file into a list of entries. Each entry has:
-        * `name` - The name of the datapoint
-        * `dataset` - The name of the dataset from which the point originates. Corresponds to `DatasetRefNames` in the
-            `IndValues.csv` file for the particular dataset.
-        * `refval` - The reference energy value in **HARTREES**
-        * `deps` - A list of molecular geometries that make up this datapoint
-        * `coeffs` - Coefficients for the energy value of each geometry in `deps`. Often, this is 1, -1, -1 for a diamer
-            and two monomer geometries, respectively. These coefficients are used to calculate the final energy.
-        * `method` - Based on the set of rules in `RULES`, a calculation method is determined.
+        * `db` - Database name
+        * `rules` - Set of rules to determine calculation methods for datapoints
+        * `db_dir` - Database directory to search in. Defaults to `DATABASES_DIR`
+        * `csv_name` - The name of the value CSV. Defaults to `'IndValues.csv'`
     """
     path = os.path.join(db_dir, db, csv_name)
     results_list = []
@@ -131,6 +132,41 @@ def read_database_eval(db, rules=RULES, db_dir=DATABASES_DIR, csv_name='DatasetE
                 raise Exception("Malformed row in dataset eval file: " + str(test))
             return obj
         return [*map(evalRow, filter(lambda r: len(r) > 1, evalreader))]
+
+def read_deviations(db, out_dir=OUTPUTS_DIR, csv_name='IndValues.csv'):
+    """
+        Parse an `IndValues.csv` file into a map of (dft, dataset) -> list of datapoint deviations from reference (DP
+        minus reference). Units are not transformed; Unit values from `IndValues.csv` are preserved. Returns a tuple of
+        a list of DFT names, a list of dataset names, and the above map.
+        * `db` - Database name
+        * `out_dir` - Output directory to search in. Defaults to `OUTPUTS_DIR`
+        * `csv_name` - The name of the value CSV. Defaults to `'IndValues.csv'`
+    """
+    path = os.path.join(out_dir, db, csv_name)
+    results_list = []
+    with open(path, newline='') as csvfile:
+        evalreader = csv.reader(csvfile, dialect='excel')
+        
+        dft_names = evalreader.__next__()[3:]
+        
+        dft_db_map = {}
+        def point(dft, ds_name, point):
+            if not (dft, ds_name) in dft_db_map: dft_db_map[(dft, ds_name)] = []
+            dft_db_map[(dft, ds_name)].append(point)
+        
+        datasets = set()
+        for row in evalreader:
+            # dp_name = row[0] # datapoint name; we don't track it
+            ds_name = row[1]
+            ref = float(row[2])
+            datasets.add(ds_name)
+            
+            i = 3
+            for dft in dft_names:
+                point(dft, ds_name, abs(float(row[i]) - ref))
+                i += 1
+        
+        return (dft_names, [*datasets], dft_db_map)
 
 def get_dep_set(points):
     """
@@ -228,7 +264,13 @@ localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_INPUT
 rule ALL:
     input:
         expand('{out_DIR}/{db}/IndValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
-        expand('{out_DIR}/{db}/RunTimes.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR)
+        expand('{out_DIR}/{db}/RunTimes.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/MADValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/RMSDValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/MDValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/MAXValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/MINValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR),
+        expand('{out_DIR}/{db}/AMAXValues.csv', db=DATABASES.keys(), out_DIR=OUTPUTS_DIR)
 
 # All of the output files that need to be build for a complete database
 all_mol_outs = unpack(
@@ -239,6 +281,33 @@ all_mol_outs = unpack(
         e_DIR=ENERGIES_DIR
     )
 )
+
+stat_files = {
+    'MAD_VALUES': ('MADValues.csv', meanabs),
+    'RMSD_VALUES': ('RMSDValues.csv', rms),
+    'MD_VALUES': ('MDValues.csv', mean),
+    'MAX_VALUES': ('MAXValues.csv', max),
+    'MIN_VALUES': ('MINValues.csv', min),
+    'AMAX_VALUES': ('AMAXValues.csv', maxabs),
+}
+for rname in stat_files.keys():
+    rule:
+        name: rname
+        output: OUTPUTS_DIR + '/{db}/' + stat_files[rname][0]
+        input: OUTPUTS_DIR + '/{db}/IndValues.csv'
+        run:
+            DB=DATABASES[wildcards.db]
+            (dfts, datasets, dev_map) = read_deviations(wildcards.db)
+            # Turn our map to lists of deviations into a map to single statistical measurements (floats)
+            # Use the function provided to aggregate the list; See stat_files
+            # Access by `rule` here (NOT `rname`) to work around Snakemake bug
+            dev_map = {k: stat_files[rule][1](v) for k, v in dev_map.items()}
+            
+            write_csv(
+                output[0],
+                Functional = dfts,
+                **{ds: [dev_map[(dft, ds)] for dft in dfts] for ds in datasets}
+            )
 
 rule IND_VALUES:
     # Generate the `IndValues.csv` file in the given output directory for the given database.
