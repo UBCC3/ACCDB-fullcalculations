@@ -92,7 +92,7 @@ REGEXP: '    Total Energy =\s*' # Psi4
 #Can be tested with something like https://regex101.com/; Beware, group naming syntax is not standard; Use the Python
 #  standard for naming groups: (?P<name>...) instead of (?<name>...)
 #Valid group names are days, hours, minutes, seconds, millis (self-explanatory)
-TIME_REGEXP: '\s*Psi4 wall time for execution:\s*(?P<hours>[0-9]+):(?P<minutes>[0-9]+):(?P<seconds>[0-9\.]+)'
+TIME_REGEXP: '\s*Psi4 wall time for execution:\s*(?:(?P<days>[0-9]+)\s*day(?:s)?,\s*)?(?P<hours>[0-9]+):(?P<minutes>[0-9]+):(?P<seconds>[0-9\.]+)'
 
 # A method for dealing with the different units being thrown around everywhere
 # Energy of 1 Hartree in the designated unit. For Psi4, this is 1.0 since it outputs in Hartrees.

@@ -81,7 +81,7 @@ def rule_matches(match, **attribs):
             return False
         elif isinstance(v, list):
             if not attribs[k] in v: return False
-        elif match[k] != v:
+        elif attribs[k] != v:
             return False
     return True
 def evaluate_rules(rules, **attribs):
@@ -181,11 +181,13 @@ def get_dep_set(points):
 
 def get_regex_result(regexp, *path):
     "Find the last instance of `regexp` in the `mol.out` file at `*path`."
-    with open(os.path.join(*path, 'mol.out'), 'r') as qcengine_out:
+    fname = os.path.join(*path, 'mol.out')
+    with open(fname, 'r') as qcengine_out:
         # we are only interested in the last occurrence
         # https://stackoverflow.com/a/54277955/7853604
         match = None
         for m in re.finditer(regexp, qcengine_out.read()): match = m.groupdict()
+        if match is None or not match: raise RuntimeError("Couldn't find match for regex in file {}".format(fname))
         return match
 
 def get_full_energy(point, dft, energy_out_dir=ENERGIES_DIR):
@@ -215,11 +217,12 @@ def get_runtime_seconds(point, dft, energy_out_dir=ENERGIES_DIR):
         re_res = get_regex_result(total_exp, energy_out_dir, dft, point['method'], point['deps'][i])
         # Find total in seconds based on all available named groups; Note that they're all optional, but one needs to
         # be specified to get a non-zero answer of course
-        days =     float(re_res['days'])    if 'days'    in re_res else 0
-        hours =   (float(re_res['hours'])   if 'hours'   in re_res else 0) + 24 * days
-        minutes = (float(re_res['minutes']) if 'minutes' in re_res else 0) + 60 * hours
-        seconds = (float(re_res['seconds']) if 'seconds' in re_res else 0) + 60 * minutes
-        seconds += (float(re_res['millis']) if 'millis'  in re_res else 0) / 1000.0
+        def getval(name): return float(re_res[name]) if (name in re_res and not re_res[name] is None) else 0.0
+        days     = getval('days'   )
+        hours    = getval('hours'  ) + 24 * days
+        minutes  = getval('minutes') + 60 * hours
+        seconds  = getval('seconds') + 60 * minutes
+        seconds += getval('millis' ) / 1000.0
         s += seconds
     return s
 
@@ -259,7 +262,7 @@ def write_csv(file, **kwargs):
 # -------------------------------------------------------------------------------------------------------------------- #
 
 # No need to run simple calculations on a cluster; This would take longer than running locally
-localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_INPUT
+localrules: ALL, IND_VALUES, RUN_TIMES, QCENGINE_INPUT, MAD_VALUES, RMSD_VALUES, MD_VALUES, MAX_VALUES, MIN_VALUES, AMAX_VALUES
 
 rule ALL:
     input:
